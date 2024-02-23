@@ -84,7 +84,8 @@ if __name__ == "__main__":
                 ### Sql query parser
                 mylist = []
                 # check if block starts with select/with command, else combine errorneous views
-                if block.lower().strip().startswith(("select", "(select", "( select", "with")):
+                if block.lower().strip().startswith(("select", "(select", "( select", 
+                                                     "(\nselect","with")):
                     #block = Parser(block).generalize
                     try:
                         table_list = Parser(block).tables #Parser(' '.join(block.split())).tables
@@ -117,8 +118,8 @@ if __name__ == "__main__":
         print(f'\n###$$$@@@ Extraction stopped:{mul_sel_query}')
         
         print('***** Metadata extraction complete ****************')
-            
+
             
 
     
-    
+
