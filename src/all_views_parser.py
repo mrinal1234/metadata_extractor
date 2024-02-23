@@ -53,10 +53,11 @@ def create_view_name(block : str):
 if __name__ == "__main__":
     
     os.chdir(INPUT_DIR)
+    start = time.time()
     df = pd.DataFrame(columns = ['File', 'Schema', 'View_Name',
                              'Operation', 'Table_Schema_Name','Tables', 'Sequence'])
-    
-    for filename in glob.glob('*.sql'):
+        
+    for filename in glob.glob('*.sql'): #('ACQ_O.sql'):('01_check.sql')
         print('***** Initiating metadata extraction *********************\n')
         print(f'### Input directory: {INPUT_DIR}')
         fname = filename.replace(".sql","")
@@ -66,26 +67,40 @@ if __name__ == "__main__":
         file.close()
         lines = re.split(";\n\n", sqlFile)
         print(f'### No of Views:{len(lines)}\n')
-        
-        print('--- Starting metadata extraction ...\n')
-        
-        d1 = []
-        for line in lines:
-            m = create_view_name(line)
-            if len(m) != 0:
-                block = re.split('AS\s+\n', line.strip(), 0)[-1]
-                if block.startswith("SELECT"):
-                    table_list = Parser(block).tables
-                    mylist = []
-                    for table in table_list:
-                        table_schema_name, table_name = split_table_info(table)
-                        mylist.append(['Select', table_schema_name, table_name])
 
+        print('--- Starting metadata extraction ...\n')
+
+        d1 = []
+        mul_sel_query = []
+        for line in lines:
+            ### extract schema and view name
+            m = create_view_name(line)
+
+            if len(m) != 0:
+                ### split view into blocks
+                block = re.split('AS\s+\n', line.strip(), 0)[-1]
+                block = re.sub("  "," ", block)
+
+                ### Sql query parser
+                mylist = []
+                # check if block starts with select/with command, else combine errorneous views
+                if block.lower().strip().startswith(("select", "(select", "( select", "with")):
+                    #block = Parser(block).generalize
+                    try:
+                        table_list = Parser(block).tables #Parser(' '.join(block.split())).tables
+                        for table in table_list:
+                            table_schema_name, table_name = split_table_info(table)
+                            mylist.append(['Select', table_schema_name, table_name])
+                        print(f'... Extraction complete for : {m[0][1]}')
+                    except:
+                        print("\n... Extraction halted : {}\n".format(m[0][1]))
+                        mul_sel_query.append(m[0][1])
+
+                ### append schema + table names for each view to a list
                 result = [[m[0][0]]+[m[0][1]]+i for i in mylist]
-            else:
-                break
+
             d1.extend(result)
-            print(f'... Extraction complete for : {m[0][1]}')
+            #print(f'... Extraction complete for : {m[0][1]}')
 
         # Convert d1 into dataframe 
         print('\n----- Converting extracted data into .csv file ...\n')
@@ -94,7 +109,16 @@ if __name__ == "__main__":
         d2 = d2[~(d2.Tables.isin(["SET", "UPDATE", "(SELECT", "_DT,"]))]
         d2['Sequence'] = d2.reset_index().index+1
         df = pd.concat([d2])
-
+        
+        # Export to .csv format
         df.to_csv(OUTPUT_DIR+'/'+fname+".csv", index=None)
+
+        print('\n### Time taken: {:.2f} secs\n'.format((time.time()-start)))
+        print(f'\n###$$$@@@ Extraction stopped:{mul_sel_query}')
+        
+        print('***** Metadata extraction complete ****************')
+            
+            
+
     
-    print('***** Metadata extraction complete ****************')
+    
