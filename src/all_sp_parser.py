@@ -3,18 +3,25 @@ import glob
 import pprint
 import re
 import typing
+import time
 from itertools import cycle
 import pandas as pd
 pd.set_option('display.max_rows', 1000)
 pd.set_option('display.max_colwidth', 2000)
 
-os.chdir("/workspace/pepsico/data/input")
+#os.chdir('/workspace/pepsico/')
+ROOT_DIR = os.path.abspath("")
+INPUT_DIR = os.path.join(ROOT_DIR, 'input')
+OUTPUT_DIR = os.path.join(ROOT_DIR, 'output')
 
 
 REG_BLOCK_COMMENT = re.compile("(/\*)[\w\W]*?(\*/)", re.IGNORECASE)
 REG_LINE_COMMENT = re.compile('(--.*)', re.IGNORECASE)
 
 def split_table_info(table_info: str):
+    """
+    Split schema.table into schema and table
+    """
     table_info = table_info.split(".")
     #print('table_info', table_info)
     if len(table_info) >= 3:
@@ -31,6 +38,9 @@ def split_table_info(table_info: str):
 
 
 def split_procedure_to_commits(sqlCommands: list):
+    """
+    Split code script procedures into commits
+    """
     stored_procedure = []
     for procedure in sqlCommands:
         if re.search('COMMIT;', procedure):
@@ -47,12 +57,19 @@ def split_procedure_to_commits(sqlCommands: list):
     return stored_procedure
 
 def schema_procedure_name(s : str):
+    """
+    Extract schema and procedure name from SQL query
+    """
     if re.search("CREATE OR REPLACE PROCEDURE",s):
         schema_proc = s.strip().replace('\n',' ').split(' ')[4]
         Schema, Procedure = split_table_info(schema_proc)
     elif re.search("CREATE PROCEDURE",s):
         schema_proc = s.strip().split(' ')[2]
         Schema, Procedure = split_table_info(schema_proc)
+    elif re.search("CREATE OR REPLACE PACKAGE BODY", s):
+        schema_proc = s.strip().replace('\n', ' ').split('BODY')[1].split('AS')[0]
+        #print('schema_proc:',schema_proc)
+        Schema, Procedure = split_table_info(schema_proc)       
     else:
         Schema = ''
         Procedure = ''
@@ -60,22 +77,19 @@ def schema_procedure_name(s : str):
     return Schema, Procedure
 
 
-REG_BLOCK_COMMENT = re.compile("(/\*)[\w\W]*?(\*/)", re.IGNORECASE)
-REG_LINE_COMMENT = re.compile('(--.*)', re.IGNORECASE)
+
 
 def procedure_commit_parsing(commit: str) -> list:
-    
+    """
+    Parse each commit to extract required metadata
+    """
     metadata = []
-    
     for s in commit.split('\n'): 
-        
         # Line Comments
         if re.search("(--.*)", s):
             s = s.replace(s,'')
-            
         if re.search("\s*JOIN\s+$",s):
             pass
-        
         if re.search("\s*JOIN\n$",s):
             pass
         
@@ -96,7 +110,7 @@ def procedure_commit_parsing(commit: str) -> list:
             metadata.append([Operation, Table_Schema_Name, Table])
             
         #delete from + select from
-        if re.search("^(?=.*(?:DELETE FROM))(?=.*(?:FROM))", s):
+        if re.search("^(?=.*(?:DELETE FROM))(?=.*(?:SELECT FROM))", s):
             Operation = 'Delete from'
             table_info1 = s.strip().split('DELETE FROM')[-1].split()[0].replace(")"," ").split()[0]  
             Table_Schema_Name, Table = split_table_info(table_info1)
@@ -180,22 +194,26 @@ def procedure_commit_parsing(commit: str) -> list:
 
 
 if __name__ == "__main__":
-    os.chdir("/workspace/pepsico/data/input")
-
+    
+    os.chdir(INPUT_DIR)
+    start = time.time()
     df = pd.DataFrame(columns = ['File', 'Procedure_No','Procedure_Schema', 'Procedure_Name', 
                                  'Commit_No','Operation', 'Table_Schema_Name','Tables', 'Sequence'])
-    for filename in glob.glob('*.sql'):
+    
+    print('\n***** Initiating metadata extraction *********************\n')
+    print(f'### Input directory: {INPUT_DIR}')
+    
+    for filename in glob.glob('*.sql'):   
+
         fname = filename.replace(".sql","")
-        print(f'Filename: {fname}\n')
+        print(f'\n--- Filename: {fname}')
         file = open(filename, 'r')
         sqlFile = file.read()
         file.close()
         sqlCommands = sqlFile.split("END;")
         sqlCommands = [proc for proc in sqlCommands if proc != "\n\n\n" if proc != ""]
 
-        """
-        Extract metadata from stored procedure blocks
-        """
+        print('--- Starting metadata extraction ...')
         stored_procedures = split_procedure_to_commits(sqlCommands)
 
         d2 = []
@@ -212,7 +230,6 @@ if __name__ == "__main__":
             #print('==================================================')
 
 
-
             new_list = []
             for sp, p in zip(stored_proc, procedure):
                 if isinstance(p, list):
@@ -222,7 +239,6 @@ if __name__ == "__main__":
                 else:        
                     list2 = [sp, p]
                     new_list.append(list2)
-
 
 
             com_no = 1
@@ -237,15 +253,19 @@ if __name__ == "__main__":
 
                 if (Schema1 == '') & (Procedure1 == ''):
                     result = [[pno]+[Schema0]+[Procedure0]+[com_no]+i for i in procedure_commit_parsing(commit[1])]
+                    #print(f'... Extraction complete for : {Schema0+"_"+Procedure0}')
                     #print('result1:  ', result)
                 else:
                     result = [[pno]+[Schema1]+[Procedure1]+[com_no]+i for i in procedure_commit_parsing(commit[1])]
                     #print('result2:  ', result)
+                    #print(f'... Extraction complete for : {Schema1+"_"+Procedure1}')
+    
                 d2.extend(result)
-
                 com_no +=1        
-
+            
             pno+=1
+            
+        print(f'... Extraction complete for : {d2[1][1]+"."+d2[1][2]}')
 
 
         d2=pd.DataFrame(d2, columns = ['Procedure_No','Procedure_Schema', 'Procedure_Name', 
@@ -254,6 +274,11 @@ if __name__ == "__main__":
         d2.insert(0, 'File', filename)
         d2 = d2[~(d2.Tables.isin(["SET", "UPDATE", "(SELECT", "_DT,"]))]
         d2['Sequence'] = d2.reset_index().index+1
-
+        
+        # Export data into .csv format
         df = pd.concat([d2])
-        df.to_csv("/workspace/pepsico/data/output/"+fname+".csv", index=None)
+        df.to_csv(OUTPUT_DIR+'/'+fname+".csv", index=None)
+        
+        print('... Time taken : {:.2f} secs'.format(time.time()-start))
+        
+    print('***** Metadata extraction complete ****************\n')
