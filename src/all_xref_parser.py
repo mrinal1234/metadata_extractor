@@ -2,6 +2,7 @@ import os
 import glob
 import re
 import time
+import numpy as np
 import pandas as pd
 
 pd.set_option("display.max_rows", 1000)
@@ -11,7 +12,7 @@ os.chdir("/workspace/pepsico/")
 ROOT_DIR = os.path.abspath("")
 INPUT_DIR = os.path.join(ROOT_DIR, "input")
 OUTPUT_DIR = os.path.join(ROOT_DIR, "output")
-
+Procedure = ""
 
 REG_BLOCK_COMMENT = re.compile("(/\*)[\w\W]*?(\*/)", re.IGNORECASE)
 REG_LINE_COMMENT = re.compile("(--.*)", re.IGNORECASE)
@@ -56,32 +57,22 @@ def split_procedure_to_commits(sqlCommands: list):
     return stored_procedure
 
 
-def schema_procedure_name(s: str):
+def schema_procedure_name(block: str):
     """
-    Extract schema and procedure name from SQL query
+    Extract schema and view name from SQL query
     """
-    if re.search("CREATE OR REPLACE PROCEDURE", s):
-        schema_proc = s.strip().replace("\n", " ").split(" ")[4]
-        Schema, Procedure = split_table_info(schema_proc)
-    elif re.search("CREATE OR REPLACE TRIGGER", s.strip()):
-        schema_proc = s.strip().replace('"', "").split(" ")[-1]
-        print("schema_proc", schema_proc)
-        Schema, Procedure = split_table_info(schema_proc)
-    elif re.search("CREATE PROCEDURE", s):
-        schema_proc = s.strip().split(" ")[2]
-        Schema, Procedure = split_table_info(schema_proc)
-    elif re.search("PROCEDURE", s):
-        schema_proc = s.strip().split(" ")[1]
-        Schema, Procedure = split_table_info(schema_proc)
-    elif re.search("CREATE OR REPLACE PACKAGE BODY", s):
-        schema_proc = s.strip().replace("\n", " ").split("BODY")[1].split("AS")[0]
-        # print('schema_proc:',schema_proc)
-        Schema, Procedure = split_table_info(schema_proc)
-    else:
-        Schema = ""
-        Procedure = ""
+    global xref_ProcName
+    metadata = []
+    for s in block.split("\n"):
+        if re.search("^PROCEDURE", s.strip()):
+            schema_proc = s.strip().split("PROCEDURE")[-1].strip()
+            # print('schema_proc', schema_proc)
+            Schema, xref_ProcName = split_table_info(schema_proc)
+            metadata.append([Schema, xref_ProcName])
+        else:
+            pass
 
-    return Schema, Procedure
+    return xref_ProcName, metadata
 
 
 def procedure_commit_parsing(commit: str) -> list:
@@ -91,7 +82,7 @@ def procedure_commit_parsing(commit: str) -> list:
     metadata = []
     for s in commit.split("\n"):
         # Line Comments
-        if s.startswith("(--.*)"):
+        if re.search("(--.*)", s):
             s = s.replace(s, "")
         if re.search("\s*JOIN\s+$", s):
             pass
@@ -130,11 +121,7 @@ def procedure_commit_parsing(commit: str) -> list:
             metadata.append([Operation, Table_Schema_Name, Table])
             Operation = "Select from"
             table_info2 = (
-                s.strip()
-                .split("SELECT FROM")[-1]
-                .split()[0]
-                .replace(")", " ")
-                .split()[0]
+                s.strip().split("FROM")[-1].split()[0].replace(")", " ").split()[0]
             )
             Table_Schema_Name, Table = split_table_info(table_info2)
             metadata.append([Operation, Table_Schema_Name, Table])
@@ -227,18 +214,7 @@ if __name__ == "__main__":
     os.chdir(INPUT_DIR)
     start = time.time()
     df = pd.DataFrame(
-        columns=[
-            "File",
-            "Procedure_No",
-            "Procedure_Schema",
-            "Procedure_Name",
-            "Commit_No",
-            "Operation",
-            "Table_Schema_Name",
-            "Tables",
-            "Sequence",
-        ]
-    )
+        columns=["File","Procedure_No","Procedure_Schema","Procedure_Name","Commit_No","Operation","Table_Schema_Name","Tables","Sequence"])
 
     print("\n***** Initiating metadata extraction *********************\n")
     print(f"### Input directory: {INPUT_DIR}")
@@ -247,14 +223,11 @@ if __name__ == "__main__":
         fname = filename.replace(".sql", "")
         print(f"\n--- Filename: {fname}")
         file = open(filename, "r")
-        sqlFile = file.read().upper().replace("(?:\h*\R\h*)+", " ")
+        sqlFile = file.read()
         file.close()
-        sqlFile = sqlFile.replace("END", "\nEND")
-        sqlFile = sqlFile.replace("COMMIT", "\nCOMMIT")
-        sqlFile = sqlFile.replace("SELECT", "\nSELECT")
-        # sqlFile = sqlFile.replace('WHERE', '\nWHERE')
-        sqlCommands = sqlFile.split("END;")
-        print("No of Procedures:", len(sqlCommands))
+
+        sqlCommands = sqlFile.split("\s+END\s+(\w+);")
+        print(sqlCommands)  # ("END;")
         sqlCommands = [proc for proc in sqlCommands if proc != "\n\n\n" if proc != ""]
 
         print("--- Starting metadata extraction ...")
@@ -287,8 +260,8 @@ if __name__ == "__main__":
             for commit in new_list:
                 # print(commit[0],'\n----\n', commit[1])
                 # print('==============================')
-                Schema0, Procedure0 = schema_procedure_name(commit[0])
-                Schema1, Procedure1 = schema_procedure_name(commit[1])
+                _, Schema0, Procedure0 = schema_procedure_name(commit[0])
+                _, Schema1, Procedure1 = schema_procedure_name(commit[1])
                 # print(f'schema0:{Schema0} - procedure0:{Procedure0}\n')
                 # print(f'schema1:{Schema1} - procedure1:{Procedure1}\n')
 
@@ -312,7 +285,7 @@ if __name__ == "__main__":
 
             pno += 1
 
-        print(f'... Extraction complete for : {d2[1][1]+"."+d2[1][2]}')
+        # print(f'... Extraction complete for : {d2[1][1]+"."+d2[1][2]}')
 
         d2 = pd.DataFrame(
             d2,

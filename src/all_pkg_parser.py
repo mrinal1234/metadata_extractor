@@ -63,10 +63,6 @@ def schema_procedure_name(s: str):
     if re.search("CREATE OR REPLACE PROCEDURE", s):
         schema_proc = s.strip().replace("\n", " ").split(" ")[4]
         Schema, Procedure = split_table_info(schema_proc)
-    elif re.search("CREATE OR REPLACE TRIGGER", s.strip()):
-        schema_proc = s.strip().replace('"', "").split(" ")[-1]
-        print("schema_proc", schema_proc)
-        Schema, Procedure = split_table_info(schema_proc)
     elif re.search("CREATE PROCEDURE", s):
         schema_proc = s.strip().split(" ")[2]
         Schema, Procedure = split_table_info(schema_proc)
@@ -91,7 +87,7 @@ def procedure_commit_parsing(commit: str) -> list:
     metadata = []
     for s in commit.split("\n"):
         # Line Comments
-        if s.startswith("(--.*)"):
+        if re.search("(--.*)", s):
             s = s.replace(s, "")
         if re.search("\s*JOIN\s+$", s):
             pass
@@ -249,11 +245,30 @@ if __name__ == "__main__":
         file = open(filename, "r")
         sqlFile = file.read().upper().replace("(?:\h*\R\h*)+", " ")
         file.close()
+        # sqlCommands = sqlFile.replace('END', '\nEND')
         sqlFile = sqlFile.replace("END", "\nEND")
         sqlFile = sqlFile.replace("COMMIT", "\nCOMMIT")
         sqlFile = sqlFile.replace("SELECT", "\nSELECT")
-        # sqlFile = sqlFile.replace('WHERE', '\nWHERE')
-        sqlCommands = sqlFile.split("END;")
+        sqlFile = sqlFile.replace("WHERE", "\nWHERE")
+        prc_str = [
+            str(i.strip().split(" ")[-1])
+            for i in sqlFile.split("\n")
+            if i.strip().startswith("PROCEDURE")
+        ]
+        prc_end = ["END " + str(i) + ";" for i in prc_str]
+        print("prc_end", prc_end)
+
+        #         mylist = sqlFile.split('\n')
+        #         for line in mylist:
+        #             if line in prc_end:
+        #                 line = line+"\nEND;\n"
+        #                 print('line', line)
+        #                 print('--------------------')
+
+        #         sqlFile = "\n".join(mylist)
+        #         print(sqlFile)
+
+        sqlCommands = sqlFile.split("END;\n")
         print("No of Procedures:", len(sqlCommands))
         sqlCommands = [proc for proc in sqlCommands if proc != "\n\n\n" if proc != ""]
 
